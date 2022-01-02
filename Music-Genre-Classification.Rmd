@@ -1,0 +1,303 @@
+---
+title: "Music_Genre_Classification"
+author: "Daniel Kim"
+date: "12/27/2021"
+output: html_document
+---
+
+```{r}
+# load libraries
+library(tidyr)
+library(tidyverse)
+library(dplyr)
+library(nnet)
+library(InformationValue)
+```
+
+
+```{r}
+# load dataset
+f <- file.choose()
+train <- read.csv(f, stringsAsFactors = FALSE)
+
+# Class:
+#   Acoustic/Folk : 0
+#   Alt_music : 1
+#   Blues : 2
+#   Bollywood : 3
+#   Country : 4
+#   HipHop : 5
+#   Indie Alt : 6
+#   Instrumental : 7
+#   Metal : 8
+#   Pop : 9
+#   Rock : 10
+
+glimpse(train)
+
+# change categorical variables to factors
+
+train$mode <- as.factor(train$mode)
+train$time_signature <- as.factor(train$time_signature)
+train$Class <- as.factor(train$Class)
+
+# check for missing values
+sapply(train, function(x) sum(is.na(x)))
+# Missing values: Popularity (428), key (2014), instrumentalness (4377)
+
+# creating missing value columns
+train$Popularity.NA <- ifelse(is.na(train$Popularity),1,0)
+train$instrumentalness.NA <- ifelse(is.na(train$instrumentalness),1,0)
+
+# impute Popularity with median (imputed with Populartiy = 44)
+train$Popularity[is.na(train$Popularity)] <- median(train$Popularity, na.rm = TRUE)
+
+# change NA values in key to "M"
+train$key[is.na(train$key)] <- "M"
+train$key <- as.factor(train$key)
+
+# impute instrumentalness to mean (imputed with instrumentalness = 0.1775619)
+train$instrumentalness[is.na(train$instrumentalness)] <- mean(train$instrumentalness, na.rm = TRUE)
+
+
+
+```
+
+```{r}
+# Multinomial Logistic Regression
+train$Class <- relevel(train$Class, ref = 10)
+
+glogit.model <- multinom(Class ~ Popularity + danceability + energy + key +
+                           loudness + mode + speechiness + acousticness + 
+                           instrumentalness + liveness + valence + tempo + 
+                           duration_in.min.ms + time_signature + Popularity.NA +
+                           instrumentalness.NA, data = train)
+summary(glogit.model)
+
+# exponentiate the coefficients for interpretation
+exp(coef(glogit.model))
+
+# prediction
+pred_probs <- predict(glogit.model, newdata = train, type = 'probs')
+head(pred_probs)
+
+pred_probs.class <- predict(glogit.model, newdata = train, type = 'class')
+
+train$p_hat <- pred_probs.class
+
+train$log_reg <- ifelse(train$p_hat == train$Class, 1,0)
+# able to predict 9013 observations correctly. Accuracy : 0.5008335
+```
+
+```{r}
+library(tidyverse)
+library(caret)
+library(randomForest)
+library(xgboost)
+library(Ckmeans.1d.dp)
+library(pdp)
+
+# Random Forest Model
+set.seed(42)
+rf.train <- randomForest(Class ~ Popularity + danceability + energy + key +
+                           loudness + mode + speechiness + acousticness + 
+                           instrumentalness + liveness + valence + tempo + 
+                           duration_in.min.ms + time_signature + Popularity.NA +
+                           instrumentalness.NA, data = train, ntree = 500, importance = TRUE)
+
+plot(rf.train)
+# ntree = 200 looks good
+
+#Look at variable importance
+varImpPlot(rf.train,
+           sort = TRUE,
+           n.var = 10,
+           main = "Top 10 - Variable Importance")
+importance(rf.train)
+
+# Tune an random forest mtry value
+set.seed(42)
+tuneRF(x = train[,-17], y = train$Class, 
+       plot = TRUE, ntreeTry = 200, stepFactor = 0.5)
+# mtry = 8 has lowest error
+
+# Tuned Random Forest
+set.seed(42)
+rf.train <- randomForest(Class ~ Popularity + danceability + energy + key +
+                           loudness + mode + speechiness + acousticness + 
+                           instrumentalness + liveness + valence + tempo + 
+                           duration_in.min.ms + time_signature + Popularity.NA +
+                           instrumentalness.NA, data = train, ntree = 200, 
+                        mtry = 8, importance = TRUE)
+
+varImpPlot(rf.train,
+           sort = TRUE,
+           n.var = 14,
+           main = "Order of Variables")
+importance(rf.train, type = 1)
+
+# Random Variable Comparison
+train$random <- rnorm(17996)
+set.seed(42)
+rf.train.rand <- randomForest(Class ~ Popularity + danceability + energy + key +
+                           loudness + mode + speechiness + acousticness + 
+                           instrumentalness + liveness + valence + tempo + 
+                           duration_in.min.ms + time_signature + Popularity.NA +
+                           instrumentalness.NA + random, data = train, ntree = 200, 
+                        mtry = 8, importance = TRUE)
+
+varImpPlot(rf.train.rand,
+           sort = TRUE,
+           n.var = 14,
+           main = "Order of Variables")
+importance(rf.train.rand, type = 1)
+
+# prediction
+pred_probs.rf <- predict(rf.train, newdata = train, type = 'class')
+
+train$rf.pred <- pred_probs.rf
+
+train$rf <- ifelse(train$rf.pred == train$Class, 1,0)
+# 16292 observations predicted correctly. accuracy: 0.9053
+
+
+
+
+```
+
+```{r}
+# XGBoost
+
+# Prepare date for XG Boost
+train_x <- model.matrix(Class ~ Popularity + danceability + energy + key +
+                           loudness + mode + speechiness + acousticness + 
+                           instrumentalness + liveness + valence + tempo + 
+                           duration_in.min.ms + time_signature + Popularity.NA +
+                           instrumentalness.NA, data = train)[, -1]
+train_y <- train$Class
+
+# Build XGBoost model
+set.seed(42)
+xgb.train <- xgboost(data = train_x, label = train_y, subsample = 0.5, nrounds = 100)
+
+# Tuning an XGBoost nrounds parameter - 14 did best (lowest test-rmse 3.121009+0.037008 )
+set.seed(42)
+xgbcv.train <- xgb.cv(data = train_x, label = train_y, subsample = 0.5, nrounds = 100, nfold = 10)
+
+# Tuning through caret
+tune_grid <- expand.grid(
+  nrounds = 14,
+  eta = c(0.1, 0.15, 0.2, 0.25, 0.3),
+  max_depth = c(1:10),
+  gamma = c(0),
+  colsample_bytree = 1,
+  min_child_weight = 1,
+  subsample = c(0.25, 0.5, 0.75, 1)
+)
+
+set.seed(42)
+xgb.train.caret <- train(x = train_x, y = train_y,
+      method = "xgbTree",
+      tuneGrid = tune_grid,
+      trControl = trainControl(method = 'cv', # Using 10-fold cross-validation
+                               number = 10))
+
+plot(xgb.train.caret)
+xgb.train.caret$bestTune
+
+# Variable importance
+xgb.train <- xgboost(data = train_x, label = train_y, subsample = 0.75, 
+                     nrounds = 14, eta = 0.25, max_depth = 6)
+
+xgb.importance(feature_names = colnames(train_x), model = xgb.train)
+
+xgb.ggplot.importance(xgb.importance(feature_names = colnames(train_x), model = xgb.train))
+
+# prediction
+pred_probs.xgb <- predict(xgb.train.caret, type = 'raw')
+train$xgb.pred <- pred_probs.xgb
+
+train$xgb <- ifelse(train$xgb.pred == train$Class, 1,0)
+
+# 11166 observations predicted correctly. accuracy: 0.6205
+
+```
+
+```{r}
+library(nnet)
+library(NeuralNetTools)
+library(reshape2)
+
+# Neural Net
+
+# Standardizing Continuous Variables
+train.s <- train %>%
+  mutate(s_Popularity = scale(Popularity),
+         s_danceability = scale(danceability),
+         s_energy = scale(energy),
+         s_loudness = scale(loudness),
+         s_speechiness = scale(speechiness),
+         s_acousticness = scale(acousticness),
+         s_instrumentalness = scale(instrumentalness),
+         s_liveness = scale(liveness),
+         s_valence = scale(valence),
+         s_tempo = scale(tempo),
+         s_duration_in.min.ms = scale(duration_in.min.ms)
+         )
+
+# Neural Network model
+set.seed(42)
+nn.train <- nnet(Class ~ s_Popularity + s_danceability + s_energy + key +
+                           s_loudness + mode + s_speechiness + s_acousticness + 
+                           s_instrumentalness + s_liveness + s_valence + s_tempo + 
+                           s_duration_in.min.ms + time_signature + Popularity.NA +
+                           instrumentalness.NA, data = train.s,
+                 size = 5, linout=TRUE)
+
+# Plot the network
+plotnet(nn.train)
+
+# Optimize Number of Hidden Nodes and Regularization (decay option)
+tune_grid <- expand.grid(
+  .size = c(3, 4, 5, 6, 7),
+  .decay = c(0, 0.5, 1)
+)
+
+set.seed(42)
+nn.train.caret <- train(Class ~ s_Popularity + s_danceability + s_energy + key +
+                           s_loudness + mode + s_speechiness + s_acousticness + 
+                           s_instrumentalness + s_liveness + s_valence + s_tempo + 
+                           s_duration_in.min.ms + time_signature + Popularity.NA +
+                           instrumentalness.NA, data = train.s,
+                 method = "nnet", tuneGrid = tune_grid,
+                 trControl = trainControl(method = 'cv', number = 10),
+                 trace = FALSE, linout = TRUE)
+
+nn.train.caret$bestTune
+# bestTune is size = 7, decay = 0.5
+
+# Tuned model
+set.seed(42)
+nn.train <- nnet(Class ~ s_Popularity + s_danceability + s_energy + key +
+                           s_loudness + mode + s_speechiness + s_acousticness + 
+                           s_instrumentalness + s_liveness + s_valence + s_tempo + 
+                           s_duration_in.min.ms + time_signature + Popularity.NA +
+                           instrumentalness.NA, data = train.s,
+                 size = 7, decay = 0.5, linout=TRUE)
+
+# prediction
+pred_probs.nn <- predict(nn.train, newdata = train.s, type = 'class')
+
+train$nn.pred <- pred_probs.nn
+
+train$nn <- ifelse(train$nn.pred == train$Class, 1,0)
+# 9190 observations predicted correctly. Accuracy : 0.510669
+```
+
+
+
+
+
+
+
+
