@@ -18,8 +18,17 @@ library(InformationValue)
 ```{r}
 # load dataset
 f <- file.choose()
-train <- read.csv(f, stringsAsFactors = FALSE)
+music <- read.csv(f, stringsAsFactors = FALSE)
 
+## 80% of the sample size
+smp_size <- floor(0.80 * nrow(music))
+
+## set the seed to make your partition reproducible
+set.seed(42)
+train_ind <- sample(seq_len(nrow(music)), size = smp_size)
+
+train <- music[train_ind, ]
+test <- music[-train_ind, ]
 # Class:
 #   Acoustic/Folk : 0
 #   Alt_music : 1
@@ -40,6 +49,9 @@ glimpse(train)
 train$mode <- as.factor(train$mode)
 train$time_signature <- as.factor(train$time_signature)
 train$Class <- as.factor(train$Class)
+test$mode <- as.factor(test$mode)
+test$time_signature <- as.factor(test$time_signature)
+test$Class <- as.factor(test$Class)
 
 # check for missing values
 sapply(train, function(x) sum(is.na(x)))
@@ -48,17 +60,22 @@ sapply(train, function(x) sum(is.na(x)))
 # creating missing value columns
 train$Popularity.NA <- ifelse(is.na(train$Popularity),1,0)
 train$instrumentalness.NA <- ifelse(is.na(train$instrumentalness),1,0)
+test$Popularity.NA <- ifelse(is.na(test$Popularity),1,0)
+test$instrumentalness.NA <- ifelse(is.na(test$instrumentalness),1,0)
 
 # impute Popularity with median (imputed with Populartiy = 44)
 train$Popularity[is.na(train$Popularity)] <- median(train$Popularity, na.rm = TRUE)
+test$Popularity[is.na(test$Popularity)] <- median(test$Popularity, na.rm = TRUE)
 
 # change NA values in key to "M"
 train$key[is.na(train$key)] <- "M"
 train$key <- as.factor(train$key)
+test$key[is.na(test$key)] <- "M"
+test$key <- as.factor(test$key)
 
 # impute instrumentalness to mean (imputed with instrumentalness = 0.1775619)
 train$instrumentalness[is.na(train$instrumentalness)] <- mean(train$instrumentalness, na.rm = TRUE)
-
+test$instrumentalness[is.na(test$instrumentalness)] <- mean(test$instrumentalness, na.rm = TRUE)
 
 
 ```
@@ -86,7 +103,9 @@ pred_probs.class <- predict(glogit.model, newdata = train, type = 'class')
 train$p_hat <- pred_probs.class
 
 train$log_reg <- ifelse(train$p_hat == train$Class, 1,0)
-# able to predict 9013 observations correctly. Accuracy : 0.5008335
+
+# train : able to predict 9013 observations correctly. Accuracy : 0.5043
+
 ```
 
 ```{r}
@@ -96,6 +115,7 @@ library(randomForest)
 library(xgboost)
 library(Ckmeans.1d.dp)
 library(pdp)
+library(crunch)
 
 # Random Forest Model
 set.seed(42)
@@ -114,6 +134,7 @@ varImpPlot(rf.train,
            n.var = 10,
            main = "Top 10 - Variable Importance")
 importance(rf.train)
+# important variables: duration_in.min.ms, acousticness, speechiness
 
 # Tune an random forest mtry value
 set.seed(42)
@@ -122,13 +143,21 @@ tuneRF(x = train[,-17], y = train$Class,
 # mtry = 8 has lowest error
 
 # Tuned Random Forest
+# set.seed(42)
+# rf.train <- randomForest(Class ~ Popularity + danceability + energy + key +
+#                            loudness + mode + speechiness + acousticness + 
+#                            instrumentalness + liveness + valence + tempo + 
+#                            duration_in.min.ms + time_signature + Popularity.NA +
+#                            instrumentalness.NA, data = train, ntree = 200, 
+#                         mtry = 8, importance = TRUE)
+
 set.seed(42)
 rf.train <- randomForest(Class ~ Popularity + danceability + energy + key +
                            loudness + mode + speechiness + acousticness + 
                            instrumentalness + liveness + valence + tempo + 
                            duration_in.min.ms + time_signature + Popularity.NA +
-                           instrumentalness.NA, data = train, ntree = 200, 
-                        mtry = 8, importance = TRUE)
+                           instrumentalness.NA, data = train, ntree = 300, 
+                        mtry = 5, importance = TRUE)
 
 varImpPlot(rf.train,
            sort = TRUE,
@@ -136,15 +165,16 @@ varImpPlot(rf.train,
            main = "Order of Variables")
 importance(rf.train, type = 1)
 
+
 # Random Variable Comparison
-train$random <- rnorm(17996)
+train$random <- rnorm(14396)
 set.seed(42)
 rf.train.rand <- randomForest(Class ~ Popularity + danceability + energy + key +
                            loudness + mode + speechiness + acousticness + 
                            instrumentalness + liveness + valence + tempo + 
                            duration_in.min.ms + time_signature + Popularity.NA +
-                           instrumentalness.NA + random, data = train, ntree = 200, 
-                        mtry = 8, importance = TRUE)
+                           instrumentalness.NA + random, data = train, ntree = 300, 
+                        mtry = 5, importance = TRUE)
 
 varImpPlot(rf.train.rand,
            sort = TRUE,
@@ -154,16 +184,110 @@ importance(rf.train.rand, type = 1)
 
 # prediction
 pred_probs.rf <- predict(rf.train, newdata = train, type = 'class')
+pred_probs.rf.test <- predict(rf.train, newdata = test, type = 'class')
 
 train$rf.pred <- pred_probs.rf
+test$rf.pred <- pred_probs.rf.test
 
 train$rf <- ifelse(train$rf.pred == train$Class, 1,0)
-# 16292 observations predicted correctly. accuracy: 0.9053
+table(train$rf)
+# train: 13282/14396 observations predicted correctly. accuracy: 0.9226
 
+test$rf <- ifelse(test$rf.pred == test$Class, 1,0)
+table(test$rf)
+# test:  1827/3600 observations predicted correctly. accuracy: 0.5153
 
+# check how well model performed for each category
+test.filter <- test %>%
+  group_by(Class) %>%
+  mutate(ratio = sum(rf)/n()) %>%
+  summarize(perc = min(ratio))
+
+test.filter
+
+# Top three classes: 7, 0, 3
+# Bottom three classes: 1, 6, 2
+
+# check if top two and top three predictions match accuracy
+pred_probs.rf.test.prob <- predict(rf.train, newdata = test, type = 'prob')
+ranks <- as.data.frame(t(apply(-pred_probs.rf.test.prob,1, rank)))
+
+test.rank <- cbind(test, t(apply(-ranks, 1,rank)))
+
+for (row in 1:nrow(ranks)) {
+  actual = as.character(as.numeric(test$Class[row]) - 1)
+  if (ranks[row,actual] <= 2.0) {
+    test$top2[row] = 1
+  } else {
+    test$top2[row] = 0
+  }
+  if (ranks[row,actual] <= 3.0) {
+    test$top3[row] = 1
+  } else {
+    test$top3[row] = 0
+  }
+}
+
+table(test$top2)
+table(test$top3)
+## Top 2 predictions lead to 74.2% accuracy and Top 3 predictions lead to 85.1% accuracy
+
+# check accuracy by group for top 2
+test.filter.top2 <- test %>%
+  group_by(Class) %>%
+  mutate(ratio = sum(top2)/n()) %>%
+  summarize(perc = min(ratio))
+
+test.filter.top2
+# Top three classes: 0, 3, 7
+# Bottom three classes: 1, 6, 2
+
+# check accuracy by group for top 3
+test.filter.top3 <- test %>%
+  group_by(Class) %>%
+  mutate(ratio = sum(top3)/n()) %>%
+  summarize(perc = min(ratio))
+
+test.filter.top3
+# Top three classes: 0, 10, 7
+# Bottom three classes: 1, 2, 9
+```
+
+```{r}
+library(randomForest)
+library(mlbench)
+library(caret)
+
+# train model
+
+customRF <- list(type = "Classification", library = "randomForest", loop = NULL)
+customRF$parameters <- data.frame(parameter = c("mtry", "ntree"), class = rep("numeric", 2), label = c("mtry", "ntree"))
+customRF$grid <- function(x, y, len = NULL, search = "grid") {}
+customRF$fit <- function(x, y, wts, param, lev, last, weights, classProbs, ...) {
+  randomForest(x, y, mtry = param$mtry, ntree=param$ntree, ...)
+}
+customRF$predict <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+   predict(modelFit, newdata)
+customRF$prob <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+   predict(modelFit, newdata, type = "prob")
+customRF$sort <- function(x) x[order(x[,1]),]
+customRF$levels <- function(x) x$classes
+
+control <- trainControl(method="repeatedcv", number=10, repeats=3)
+tunegrid <- expand.grid(.mtry=c(5:8), .ntree=c(200, 300, 400))
+set.seed(42)
+custom <- train(Class ~ Popularity + danceability + energy + key +
+                           loudness + mode + speechiness + acousticness + 
+                           instrumentalness + liveness + valence + tempo + 
+                           duration_in.min.ms + time_signature + Popularity.NA +
+                           instrumentalness.NA, data=train, customRF, metric='Accuracy', tuneGrid=tunegrid, trControl=control)
+summary(custom)
+plot(custom)
 
 
 ```
+
+
 
 ```{r}
 # XGBoost
@@ -185,16 +309,25 @@ set.seed(42)
 xgbcv.train <- xgb.cv(data = train_x, label = train_y, subsample = 0.5, nrounds = 100, nfold = 10)
 
 # Tuning through caret
+# tune_grid <- expand.grid(
+#   nrounds = 14,
+#   eta = c(0.1, 0.15, 0.2, 0.25, 0.3),
+#   max_depth = c(1:10),
+#   gamma = c(0),
+#   colsample_bytree = 1,
+#   min_child_weight = 1,
+#   subsample = c(0.25, 0.5, 0.75, 1)
+# )
+
 tune_grid <- expand.grid(
   nrounds = 14,
-  eta = c(0.1, 0.15, 0.2, 0.25, 0.3),
+  eta = c(0.1, 0.2, 0.3, 0.4, 0.5),
   max_depth = c(1:10),
   gamma = c(0),
   colsample_bytree = 1,
   min_child_weight = 1,
   subsample = c(0.25, 0.5, 0.75, 1)
 )
-
 set.seed(42)
 xgb.train.caret <- train(x = train_x, y = train_y,
       method = "xgbTree",
@@ -206,8 +339,11 @@ plot(xgb.train.caret)
 xgb.train.caret$bestTune
 
 # Variable importance
-xgb.train <- xgboost(data = train_x, label = train_y, subsample = 0.75, 
-                     nrounds = 14, eta = 0.25, max_depth = 6)
+# xgb.train <- xgboost(data = train_x, label = train_y, subsample = 0.75, 
+#                      nrounds = 14, eta = 0.25, max_depth = 6)
+
+xgb.train <- xgboost(data = train_x, label = train_y, subsample = 1, 
+                     nrounds = 14, eta = 0.4, max_depth = 5)
 
 xgb.importance(feature_names = colnames(train_x), model = xgb.train)
 
@@ -227,6 +363,7 @@ train$xgb <- ifelse(train$xgb.pred == train$Class, 1,0)
 library(nnet)
 library(NeuralNetTools)
 library(reshape2)
+library(neuralnet)
 
 # Neural Net
 
