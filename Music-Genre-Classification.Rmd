@@ -251,6 +251,32 @@ test.filter.top3 <- test %>%
 test.filter.top3
 # Top three classes: 0, 10, 7
 # Bottom three classes: 1, 2, 9
+
+# Examine the trees
+tree.output = getTree(rf.train,1, labelVar = TRUE)
+
+# Filter out Acoustic/Folk
+rf.acoustic <- test %>%
+  filter(Class == 1) %>%
+  group_by(rf.pred) %>%
+  summarize(count = n()) %>%
+  arrange(desc(count))
+
+rf.acoustic
+### 118 chose Indie Alt, 113 chose rock and only 5 were predicted correctly
+
+# Filter out the Blues
+rf.blues <- test %>%
+  filter(Class == 2) %>%
+  group_by(rf.pred) %>%
+  summarize(count = n()) %>%
+  arrange(desc(count))
+
+rf.blues  
+### 118 chose correctly for Blues. 98 Observations chose rock. 
+
+
+
 ```
 
 ```{r}
@@ -433,6 +459,91 @@ train$nn <- ifelse(train$nn.pred == train$Class, 1,0)
 
 
 
+```{r}
+# Try removing the duration variable
+# Random Forest Model
+set.seed(42)
+rf.train.nodur <- randomForest(Class ~ Popularity + danceability + energy + key +
+                           loudness + mode + speechiness + acousticness + 
+                           instrumentalness + liveness + valence + tempo + 
+                           time_signature + Popularity.NA +
+                           instrumentalness.NA, data = train, ntree = 500, importance = TRUE)
+
+plot(rf.train.nodur)
+# ntree = 200 looks good
+
+train.nodur <- subset(train, select = c(Popularity, danceability, energy, key,
+                           loudness, mode, speechiness, acousticness,
+                           instrumentalness, liveness, valence, tempo,
+                           time_signature, Popularity.NA, instrumentalness.NA, Class))
+#Look at variable importance
+varImpPlot(rf.train.nodur,
+           sort = TRUE,
+           n.var = 10,
+           main = "Top 10 - Variable Importance")
+importance(rf.train.nodur)
+# important variables: acousticness, speechiness, danceability, energy
+
+# Tune an random forest mtry value
+set.seed(42)
+tuneRF(x = train.nodur[,-16], y = train.nodur$Class, 
+       plot = TRUE, ntreeTry = 200, stepFactor = 0.5)
+# mtry = 6 has lowest error
+
+# Tuned Random Forest
+# set.seed(42)
+# rf.train <- randomForest(Class ~ Popularity + danceability + energy + key +
+#                            loudness + mode + speechiness + acousticness + 
+#                            instrumentalness + liveness + valence + tempo + 
+#                            duration_in.min.ms + time_signature + Popularity.NA +
+#                            instrumentalness.NA, data = train, ntree = 200, 
+#                         mtry = 8, importance = TRUE)
+
+set.seed(42)
+rf.train.nodur <- randomForest(Class ~ Popularity + danceability + energy + key +
+                           loudness + mode + speechiness + acousticness + 
+                           instrumentalness + liveness + valence + tempo + 
+                           + time_signature + Popularity.NA +
+                           instrumentalness.NA, data = train, ntree = 200, 
+                        mtry = 6, importance = TRUE)
+
+varImpPlot(rf.train.nodur,
+           sort = TRUE,
+           n.var = 14,
+           main = "Order of Variables")
+importance(rf.train, type = 1)
+
+
+# Random Variable Comparison
+train$random <- rnorm(14396)
+set.seed(42)
+rf.train.nodur.rand <- randomForest(Class ~ Popularity + danceability + energy + key +
+                           loudness + mode + speechiness + acousticness + 
+                           instrumentalness + liveness + valence + tempo + 
+                           time_signature + Popularity.NA +
+                           instrumentalness.NA + random, data = train, ntree = 200, 
+                        mtry = 6, importance = TRUE)
+
+varImpPlot(rf.train.nodur.rand,
+           sort = TRUE,
+           n.var = 14,
+           main = "Order of Variables")
+importance(rf.train.nodur.rand, type = 1)
+
+# prediction
+pred_probs.rf.nodur <- predict(rf.train.nodur, newdata = train, type = 'class')
+pred_probs.rf.test.nodur <- predict(rf.train.nodur, newdata = test, type = 'class')
+
+train.nodur$rf.pred <- pred_probs.rf
+test$rf.pred.nodur <- pred_probs.rf.test.nodur
+
+train.nodur$rf <- ifelse(train.nodur$rf.pred == train.nodur$Class, 1,0)
+table(train$rf)
+# train: 13282/14396 observations predicted correctly. accuracy: 0.9226
+
+test$rf.nodur <- ifelse(test$rf.pred.nodur == test$Class, 1,0)
+
+```
 
 
 
