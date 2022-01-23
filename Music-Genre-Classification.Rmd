@@ -65,7 +65,7 @@ test$instrumentalness.NA <- ifelse(is.na(test$instrumentalness),1,0)
 
 # impute Popularity with median (imputed with Populartiy = 44)
 train$Popularity[is.na(train$Popularity)] <- median(train$Popularity, na.rm = TRUE)
-test$Popularity[is.na(test$Popularity)] <- median(test$Popularity, na.rm = TRUE)
+test$Popularity[is.na(test$Popularity)] <- 44
 
 # change NA values in key to "M"
 train$key[is.na(train$key)] <- "M"
@@ -75,7 +75,7 @@ test$key <- as.factor(test$key)
 
 # impute instrumentalness to mean (imputed with instrumentalness = 0.1775619)
 train$instrumentalness[is.na(train$instrumentalness)] <- mean(train$instrumentalness, na.rm = TRUE)
-test$instrumentalness[is.na(test$instrumentalness)] <- mean(test$instrumentalness, na.rm = TRUE)
+test$instrumentalness[is.na(test$instrumentalness)] <- 0.1777146
 
 
 ```
@@ -166,6 +166,7 @@ varImpPlot(rf.train,
 importance(rf.train, type = 1)
 
 
+
 # Random Variable Comparison
 train$random <- rnorm(14396)
 set.seed(42)
@@ -182,6 +183,7 @@ varImpPlot(rf.train.rand,
            main = "Order of Variables")
 importance(rf.train.rand, type = 1)
 
+
 # prediction
 pred_probs.rf <- predict(rf.train, newdata = train, type = 'class')
 pred_probs.rf.test <- predict(rf.train, newdata = test, type = 'class')
@@ -195,7 +197,10 @@ table(train$rf)
 
 test$rf <- ifelse(test$rf.pred == test$Class, 1,0)
 table(test$rf)
-# test:  1827/3600 observations predicted correctly. accuracy: 0.5153
+
+acc <- mean(pred_probs.rf.test == test$Class)
+acc
+# test:  1827/3600 observations predicted correctly. accuracy: 0.5125
 
 # check how well model performed for each category
 test.filter <- test %>%
@@ -230,7 +235,7 @@ for (row in 1:nrow(ranks)) {
 
 table(test$top2)
 table(test$top3)
-## Top 2 predictions lead to 74.2% accuracy and Top 3 predictions lead to 85.1% accuracy
+## Top 2 predictions lead to 73.5% accuracy and Top 3 predictions lead to 85.6% accuracy
 
 # check accuracy by group for top 2
 test.filter.top2 <- test %>%
@@ -275,6 +280,23 @@ rf.blues <- test %>%
 rf.blues  
 ### 118 chose correctly for Blues. 98 Observations chose rock. 
 
+# Plot Confusion Matrix
+conf.Mat <- caret::confusionMatrix(pred_probs.rf.test, test$Class)
+conf.Mat
+
+library(cvms)
+d_mult <- tibble("target" = test$Class, "prediction" = pred_probs.rf.test)
+conf_mat <- confusion_matrix(targets = d_mult$target,
+                             predictions = d_mult$prediction)
+plot_confusion_matrix(conf_mat$'Confusion Matrix'[[1]],
+                      font_counts = font(
+                        size = 5,
+                        angle = 45,
+                        color = "black"
+                      ),
+                      add_normalized = FALSE,
+                      add_col_percentages = FALSE,
+                      add_row_percentages = FALSE)
 
 
 ```
@@ -460,35 +482,166 @@ train$nn <- ifelse(train$nn.pred == train$Class, 1,0)
 
 
 ```{r}
-# Try removing the duration variable
+# # Try removing the duration variable
+# # Random Forest Model
+# set.seed(42)
+# rf.train.nodur <- randomForest(Class ~ Popularity + danceability + energy + key +
+#                            loudness + mode + speechiness + acousticness + 
+#                            instrumentalness + liveness + valence + tempo + 
+#                            time_signature + Popularity.NA +
+#                            instrumentalness.NA, data = train, ntree = 500, importance = TRUE)
+# 
+# plot(rf.train.nodur)
+# # ntree = 200 looks good
+# 
+# train.nodur <- subset(train, select = c(Popularity, danceability, energy, key,
+#                            loudness, mode, speechiness, acousticness,
+#                            instrumentalness, liveness, valence, tempo,
+#                            time_signature, Popularity.NA, instrumentalness.NA, Class))
+# #Look at variable importance
+# varImpPlot(rf.train.nodur,
+#            sort = TRUE,
+#            n.var = 10,
+#            main = "Top 10 - Variable Importance")
+# importance(rf.train.nodur)
+# # important variables: acousticness, speechiness, danceability, energy
+# 
+# # Tune an random forest mtry value
+# set.seed(42)
+# tuneRF(x = train.nodur[,-16], y = train.nodur$Class, 
+#        plot = TRUE, ntreeTry = 200, stepFactor = 0.5)
+# # mtry = 6 has lowest error
+# 
+# # Tuned Random Forest
+# # set.seed(42)
+# # rf.train <- randomForest(Class ~ Popularity + danceability + energy + key +
+# #                            loudness + mode + speechiness + acousticness + 
+# #                            instrumentalness + liveness + valence + tempo + 
+# #                            duration_in.min.ms + time_signature + Popularity.NA +
+# #                            instrumentalness.NA, data = train, ntree = 200, 
+# #                         mtry = 8, importance = TRUE)
+# 
+# set.seed(42)
+# rf.train.nodur <- randomForest(Class ~ Popularity + danceability + energy + key +
+#                            loudness + mode + speechiness + acousticness + 
+#                            instrumentalness + liveness + valence + tempo + 
+#                            + time_signature + Popularity.NA +
+#                            instrumentalness.NA, data = train, ntree = 200, 
+#                         mtry = 6, importance = TRUE)
+# 
+# varImpPlot(rf.train.nodur,
+#            sort = TRUE,
+#            n.var = 14,
+#            main = "Order of Variables")
+# importance(rf.train, type = 1)
+# 
+# 
+# # Random Variable Comparison
+# train$random <- rnorm(14396)
+# set.seed(42)
+# rf.train.nodur.rand <- randomForest(Class ~ Popularity + danceability + energy + key +
+#                            loudness + mode + speechiness + acousticness + 
+#                            instrumentalness + liveness + valence + tempo + 
+#                            time_signature + Popularity.NA +
+#                            instrumentalness.NA + random, data = train, ntree = 200, 
+#                         mtry = 6, importance = TRUE)
+# 
+# varImpPlot(rf.train.nodur.rand,
+#            sort = TRUE,
+#            n.var = 14,
+#            main = "Order of Variables")
+# importance(rf.train.nodur.rand, type = 1)
+# 
+# # prediction
+# pred_probs.rf.nodur <- predict(rf.train.nodur, newdata = train, type = 'class')
+# pred_probs.rf.test.nodur <- predict(rf.train.nodur, newdata = test, type = 'class')
+# 
+# train.nodur$rf.pred <- pred_probs.rf
+# test$rf.pred.nodur <- pred_probs.rf.test.nodur
+# 
+# train.nodur$rf <- ifelse(train.nodur$rf.pred == train.nodur$Class, 1,0)
+# table(train$rf)
+# # train: 13282/14396 observations predicted correctly. accuracy: 0.9226
+# 
+# test$rf.nodur <- ifelse(test$rf.pred.nodur == test$Class, 1,0)
+
+```
+
+```{r}
+# Analyze difference between rock and metal
+train.rock <- train %>%
+  filter((Class == 8) | (Class == 10)) %>%
+  mutate(Class.rock = ifelse(Class ==8, 1, 0))
+
+test.rock <- test %>%
+  filter((Class == 8) | (Class == 10)) %>%
+  mutate(Class.rock = ifelse(Class ==8, 1, 0))
+
+train.rock$Class.rock <- as.factor(train.rock$Class.rock)
+test.rock$Class.rock <- as.factor(test.rock$Class.rock)
+
+logit.model.train <- glm(Class.rock ~ Popularity + danceability + energy + key +
+                            loudness + mode + speechiness + acousticness + 
+                            instrumentalness + liveness + valence + tempo + 
+                            duration_in.min.ms + time_signature + Popularity.NA +
+                            instrumentalness.NA, data = train.rock, family=binomial(link = "logit"))
+summary(logit.model.train)
+
+# backward step with BIC
+full.model <- glm(Class.rock ~ Popularity + danceability + energy + key +
+                            loudness + mode + speechiness + acousticness + 
+                            instrumentalness + liveness + valence + tempo + 
+                            duration_in.min.ms + time_signature + Popularity.NA +
+                            instrumentalness.NA, data = train.rock, family=binomial(link = "logit"),k=log(nrow(train.rock)))
+
+empty.model <- glm(Class.rock ~ 1, data = train.rock, family = binomial(link = "logit"))
+
+backward.model <- step(full.model,
+                   scope = list(lower=formula(empty.model),
+                                upper=formula(full.model)),
+                   direction = "backward")
+
+logit.model.train <- glm(Class.rock ~ Popularity + energy + key + loudness + mode + speechiness + 
+    acousticness + instrumentalness + liveness + valence + duration_in.min.ms + 
+    time_signature + instrumentalness.NA, data = train.rock, family=binomial(link = "logit"))
+# BIC = 4734.49
+
+summary(logit.model.train)
+
+# prediction
+train.rock.pred <- predict(logit.model.train, newdata = train.rock, type = 'response')
+train.rock$lr <- train.rock.pred
+
+confusionMatrix(train.rock$Class.rock, train.rock$lr, threshold = 0.5)
+
+
 # Random Forest Model
 set.seed(42)
-rf.train.nodur <- randomForest(Class ~ Popularity + danceability + energy + key +
+rf.train.rock <- randomForest(Class.rock ~ Popularity + danceability + energy + key +
                            loudness + mode + speechiness + acousticness + 
                            instrumentalness + liveness + valence + tempo + 
-                           time_signature + Popularity.NA +
-                           instrumentalness.NA, data = train, ntree = 500, importance = TRUE)
+                           duration_in.min.ms + time_signature + Popularity.NA +
+                           instrumentalness.NA, data = train.rock, ntree = 500, importance = TRUE)
 
-plot(rf.train.nodur)
+plot(rf.train.rock)
 # ntree = 200 looks good
 
-train.nodur <- subset(train, select = c(Popularity, danceability, energy, key,
-                           loudness, mode, speechiness, acousticness,
-                           instrumentalness, liveness, valence, tempo,
-                           time_signature, Popularity.NA, instrumentalness.NA, Class))
 #Look at variable importance
-varImpPlot(rf.train.nodur,
+varImpPlot(rf.train.rock,
            sort = TRUE,
            n.var = 10,
            main = "Top 10 - Variable Importance")
-importance(rf.train.nodur)
-# important variables: acousticness, speechiness, danceability, energy
+importance(rf.train.rock)
+# important variables: acousticness, energy, valence
 
 # Tune an random forest mtry value
 set.seed(42)
-tuneRF(x = train.nodur[,-16], y = train.nodur$Class, 
+tuneRF(x = train.rock[,c('Popularity', 'danceability', 'energy', 'key',
+                         'loudness', 'mode', 'speechiness', 'acousticness',
+                         'instrumentalness', 'liveness', 'valence', 'tempo',
+                         'time_signature', 'Popularity.NA', 'instrumentalness.NA')], y = train.rock$Class.rock, 
        plot = TRUE, ntreeTry = 200, stepFactor = 0.5)
-# mtry = 6 has lowest error
+# mtry = 8 has lowest error
 
 # Tuned Random Forest
 # set.seed(42)
@@ -500,51 +653,61 @@ tuneRF(x = train.nodur[,-16], y = train.nodur$Class,
 #                         mtry = 8, importance = TRUE)
 
 set.seed(42)
-rf.train.nodur <- randomForest(Class ~ Popularity + danceability + energy + key +
+rf.train.rock <- randomForest(Class.rock ~ Popularity + danceability + energy + key +
                            loudness + mode + speechiness + acousticness + 
                            instrumentalness + liveness + valence + tempo + 
-                           + time_signature + Popularity.NA +
-                           instrumentalness.NA, data = train, ntree = 200, 
-                        mtry = 6, importance = TRUE)
+                           duration_in.min.ms + time_signature + Popularity.NA +
+                           instrumentalness.NA, data = train.rock, ntree = 300, 
+                        mtry = 5, importance = TRUE)
 
-varImpPlot(rf.train.nodur,
+varImpPlot(rf.train.rock,
            sort = TRUE,
            n.var = 14,
            main = "Order of Variables")
-importance(rf.train, type = 1)
+importance(rf.train.rock, type = 1)
+
 
 
 # Random Variable Comparison
 train$random <- rnorm(14396)
 set.seed(42)
-rf.train.nodur.rand <- randomForest(Class ~ Popularity + danceability + energy + key +
+rf.train.rand <- randomForest(Class ~ Popularity + danceability + energy + key +
                            loudness + mode + speechiness + acousticness + 
                            instrumentalness + liveness + valence + tempo + 
-                           time_signature + Popularity.NA +
-                           instrumentalness.NA + random, data = train, ntree = 200, 
-                        mtry = 6, importance = TRUE)
+                           duration_in.min.ms + time_signature + Popularity.NA +
+                           instrumentalness.NA + random, data = train, ntree = 300, 
+                        mtry = 5, importance = TRUE)
 
-varImpPlot(rf.train.nodur.rand,
+varImpPlot(rf.train.rand,
            sort = TRUE,
            n.var = 14,
            main = "Order of Variables")
-importance(rf.train.nodur.rand, type = 1)
+importance(rf.train.rand, type = 1)
+
 
 # prediction
-pred_probs.rf.nodur <- predict(rf.train.nodur, newdata = train, type = 'class')
-pred_probs.rf.test.nodur <- predict(rf.train.nodur, newdata = test, type = 'class')
+pred_probs.rf.rock <- predict(rf.train.rock, newdata = train.rock, type = 'class')
+pred_probs.rf.test.rock <- predict(rf.train.rock, newdata = test.rock, type = 'class')
 
-train.nodur$rf.pred <- pred_probs.rf
-test$rf.pred.nodur <- pred_probs.rf.test.nodur
+train.rock$rf.pred <- pred_probs.rf.rock
+test.rock$rf.pred <- pred_probs.rf.test.rock
 
-train.nodur$rf <- ifelse(train.nodur$rf.pred == train.nodur$Class, 1,0)
-table(train$rf)
-# train: 13282/14396 observations predicted correctly. accuracy: 0.9226
+acc <- mean(test.rock$rf.pred == test.rock$Class.rock)
+acc
 
-test$rf.nodur <- ifelse(test$rf.pred.nodur == test$Class, 1,0)
+train.rock$Genre <- ifelse(train.rock$Class == 8, "Metal", "Rock")
+ggplot(train.rock,aes(x=energy)) + 
+    geom_density(data=subset(train.rock, Genre == "Metal"),aes(y=..density..,fill=Genre), alpha = 0.2) +
+    geom_density(data=subset(train.rock,Genre == "Rock"),aes(y=..density..,fill=Genre), alpha = 0.2) +
+    labs(x = "Energy", colour = "Genre") 
 
+
+
+ggplot(train.rock,aes(x=valence)) + 
+    geom_density(data=subset(train.rock, Class == 8),aes(y=..density..,fill=Class), alpha = 0.2) +
+    geom_density(data=subset(train.rock,Class == 10),aes(y=..density..,fill=Class), alpha = 0.2) +
+    labs(x = "valence") 
 ```
-
 
 
 
